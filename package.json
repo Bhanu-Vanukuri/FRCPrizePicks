@@ -1,0 +1,26 @@
+{
+  "name": "frcprizepicks",
+  "version": "1.0.0",
+  "description": "FPP Fantasy — FRC fantasy esports game",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Bhanu-Vanukuri/FRCPrizePicks.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Bhanu-Vanukuri/FRCPrizePicks/issues"
+  },
+  "homepage": "https://github.com/Bhanu-Vanukuri/FRCPrizePicks#readme",
+  "dependencies": {
+    "@libsql/client": "^0.15.15",
+    "dotenv": "^18.0.10",
+    "hash-wasm": "^4.12.0"
+  }
+}

@@ -101,20 +101,37 @@ async function authenticate_user(username, password) {
   await qrun('UPDATE user_auth SET last_login = ? WHERE user_id = ?', [new Date().toISOString(), row.id]);
   return String(row.id);
 }
-// validate_session(token) -> user id (string) or null; verifies expires_at and purges expired rows.
+// Session cache: token -> { uid, exp(ms) }. Sessions change rarely, so an in-memory
+// hit avoids 2 Turso round-trips on every API call (clients poll ~1/sec).
+const sessCache = new Map();
+let sessPurgeT = 0;
+// validate_session(token) -> user id (string) or null; verifies expires_at.
+// Expired-row purge runs at most once per minute, only on cache misses.
 async function validate_session(token) {
   if (!token) return null;
-  const iso = new Date().toISOString();
-  await qrun('DELETE FROM sessions WHERE expires_at <= ?', [iso]);
-  const row = await qget('SELECT user_id FROM sessions WHERE session_token = ?', [token]);
-  return row ? String(row.user_id) : null;
+  const t = now(), hit = sessCache.get(token);
+  if (hit) {
+    if (hit.exp > t) return hit.uid;
+    sessCache.delete(token);
+    await qrun('DELETE FROM sessions WHERE session_token = ?', [token]);
+    return null;
+  }
+  if (t - sessPurgeT > 60000) { sessPurgeT = t; await qrun('DELETE FROM sessions WHERE expires_at <= ?', [new Date(t).toISOString()]); }
+  const row = await qget('SELECT user_id, expires_at FROM sessions WHERE session_token = ?', [token]);
+  if (!row) return null;
+  const exp = Date.parse(row.expires_at);
+  if (!(exp > t)) { await qrun('DELETE FROM sessions WHERE session_token = ?', [token]); return null; }
+  sessCache.set(token, { uid: String(row.user_id), exp });
+  return String(row.user_id);
 }
-// logout_user(token) -> deletes the session row.
-async function logout_user(token) { if (token) await qrun('DELETE FROM sessions WHERE session_token = ?', [token]); }
+// logout_user(token) -> deletes the session row + cache entry.
+async function logout_user(token) { if (token) { sessCache.delete(token); await qrun('DELETE FROM sessions WHERE session_token = ?', [token]); } }
 // create_session(uid) -> issues a cryptographically random token with a 30-day expiry.
 async function create_session(uid) {
   const tok = crypto.randomBytes(24).toString('hex');
-  await qrun('INSERT INTO sessions (session_token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)', [tok, +uid, new Date().toISOString(), new Date(now() + 2592000000).toISOString()]);
+  const exp = now() + 2592000000;
+  await qrun('INSERT INTO sessions (session_token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)', [tok, +uid, new Date().toISOString(), new Date(exp).toISOString()]);
+  sessCache.set(tok, { uid: String(uid), exp });
   return { 'Set-Cookie': 'sid=' + tok + '; HttpOnly; Path=/; SameSite=Lax; Max-Age=2592000' };
 }
 
@@ -500,6 +517,7 @@ async function delTest(u) {
   if (Object.values(db.events).some(e => !['scheduled', 'complete', 'cancelled'].includes(e.status) && e.entries.some(x => x.uid === u.id))) return false; // mid-event: leave alone
   Object.values(db.events).forEach(e => { if (e.status === 'scheduled') e.entries = e.entries.filter(x => x.uid !== u.id); });
   await qrun('DELETE FROM users WHERE id = ?', [+u.id]); // ON DELETE CASCADE removes user_auth + sessions rows
+  for (const [tok, s] of sessCache) if (s.uid === String(u.id)) sessCache.delete(tok);
   Object.values(db.users).forEach(x => { x.friends = (x.friends || []).filter(f => f !== u.id); });
   db.history = db.history.filter(h => h.uid !== u.id); db.history.forEach(h => { h.mates = h.mates.filter(x => x !== u.id); h.opps = h.opps.filter(x => x !== u.id); });
   Object.values(db.points).forEach(p => { delete p[u.id]; }); delete db.users[u.id]; return true;

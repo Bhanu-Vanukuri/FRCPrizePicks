@@ -599,6 +599,7 @@ async function api(req, res, url) {
   const auth = () => { if (!user) throw new HttpErr(401, 'Sign in required'); return user; };
   const mod = () => { if (!auth().mod) throw new HttpErr(403, 'Moderators only'); return user; };
   let r;
+  if (m === 'GET' && p === '/api/ping') return send(res, 200, { ok: true, t: now() });
   if (m === 'GET' && p === '/api/public') return send(res, 200, { robots: Object.values(db.robots).map(r => Object.assign({}, r, { image: r.image ? true : false, price: price(r.rank) })), ranks: RANKS.map((r, i) => ({ rank: r, price: PRICES[i] })), season: season(), divisions: DIVS, traits: TRAITS, starting: STARTING, scale: S });
   if (m === 'GET' && (r = p.match(/^\/api\/robot-image\/(\d+)$/))) { const rb = db.robots[r[1]]; if (!rb || !rb.image) { res.writeHead(404); return res.end(); } const mm = rb.image.match(/^data:(.+?);base64,(.*)$/); res.writeHead(200, { 'Content-Type': mm[1], 'Cache-Control': 'max-age=60' }); return res.end(Buffer.from(mm[2], 'base64')); }
   if (m === 'POST' && p === '/api/register') {

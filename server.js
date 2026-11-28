@@ -312,7 +312,7 @@ function tickMatch(ev, m) { // returns true when match fully over
   if (!m.started && ph !== 'queue') { m.started = true;
     if (m.alliances) refreshLineup(ev, m);
     [...m.red, ...m.blue].forEach(u => { if (!m.strat[u]) m.strat[u] = pick1(allowedStrats(ev, u)); });
-    if (hasReal(m.red) || hasReal(m.blue)) notify(`⚔️ **${ev.name}** · ${m.label}\n🔴 ${m.red.map(un).join(', ')}\n🔵 ${m.blue.map(un).join(', ')}`, ev.id); }
+    if (ph === 'auto' && (hasReal(m.red) || hasReal(m.blue))) notify(`⚔️ **${ev.name}** · ${m.label}\n🔴 ${m.red.map(un).join(', ')}\n🔵 ${m.blue.map(un).join(', ')}`, ev.id); }
   if (!m.final && (ph === 'done' || ph === 'over')) finalize(ev, m);
   m.phase = ph; m.end = end; return ph === 'over';
 }

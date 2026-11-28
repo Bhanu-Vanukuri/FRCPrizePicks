@@ -79,3 +79,6 @@ See `.env.example`. Summary:
 | `MOD_USERNAME` | first account | Username granted mod on register |
 | `TURSO_DATABASE_URL` | `file:./game.db` | `libsql://...` for Turso, `file:` for local |
 | `TURSO_AUTH_TOKEN` | — | Turso auth token (not needed for `file:`) |
+| `DISCORD_WEBHOOK_URL` | — | Discord webhook for match/event notifications (unset = off) |
+| `DISCORD_MENTION` | — | Optional mention prepended to notifications, e.g. `@here` |
+| `SITE_URL` | — | Public URL used for event links in notifications |

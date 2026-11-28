@@ -54,15 +54,23 @@ const qget = async (q, p) => (await client.execute({ sql: q, args: p || [] })).r
 const qall = async (q, p) => (await client.execute({ sql: q, args: p || [] })).rows;
 
 const profileOf = u => { const p = {}; for (const k in u) if (!['id', 'username', 'email', 'lastSeen', 'salt', 'pw'].includes(k)) p[k] = u[k]; return p; };
+const userHash = new Map(); // uid -> profile JSON last flushed; skip unchanged users on save
 async function hydrateUsers() {
-  db.users = {};
+  db.users = {}; userHash.clear();
   for (const r of await qall('SELECT id, username, email, profile FROM users')) {
-    db.users[String(r.id)] = Object.assign({ id: String(r.id), username: r.username, email: r.email || '', lastSeen: 0 }, JSON.parse(r.profile || '{}'));
+    const u = Object.assign({ id: String(r.id), username: r.username, email: r.email || '', lastSeen: 0 }, JSON.parse(r.profile || '{}'));
+    db.users[String(r.id)] = u;
+    userHash.set(u.id, JSON.stringify(profileOf(u)));
   }
 }
 async function flushUsers() {
   const up = 'INSERT INTO users (id, username, email, profile, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET username = excluded.username, email = excluded.email, profile = excluded.profile';
-  for (const u of Object.values(db.users)) await qrun(up, [+u.id, u.username, u.email || '', JSON.stringify(profileOf(u)), new Date(u.joined || now()).toISOString()]);
+  for (const u of Object.values(db.users)) {
+    const prof = JSON.stringify(profileOf(u));
+    if (userHash.get(u.id) === prof) continue; // unchanged since last flush — don't rewrite (also protects manual DB edits)
+    userHash.set(u.id, prof);
+    await qrun(up, [+u.id, u.username, u.email || '', prof, new Date(u.joined || now()).toISOString()]);
+  }
 }
 async function persistState() {
   const out = Object.assign({}, db); delete out.users; delete out.sessions;
@@ -285,6 +293,15 @@ function finalize(ev, m) {
   m.result = res; m.final = true; save();
 }
 
+// ----- Discord notifications (optional; disabled when DISCORD_WEBHOOK_URL is unset) -----
+const HOOK = process.env.DISCORD_WEBHOOK_URL || '', DH_MENTION = process.env.DISCORD_MENTION || '', SITE = process.env.SITE_URL || '';
+const hasReal = list => list.some(u => { const x = db.users[u]; return x && !x.test; });
+function notify(text, eid) {
+  if (!HOOK) return;
+  const content = (DH_MENTION ? DH_MENTION + ' ' : '') + text + (SITE && eid ? '\n' + SITE + '/#/event/' + eid : '');
+  fetch(HOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: 'FPP Fantasy', content: content.slice(0, 1990), allowed_mentions: { parse: DH_MENTION ? ['everyone'] : [] } }) }).catch(() => {});
+}
 function startQuals(ev) {
   if (ev.entries.length < 6) { ev.status = 'cancelled'; return; }
   ev.tb = {}; ev.entries.forEach(e => ev.tb[e.uid] = Math.random()); ev.stats = {};
@@ -294,7 +311,8 @@ function tickMatch(ev, m) { // returns true when match fully over
   const [ph, end] = phaseOf(m, now());
   if (!m.started && ph !== 'queue') { m.started = true;
     if (m.alliances) refreshLineup(ev, m);
-    [...m.red, ...m.blue].forEach(u => { if (!m.strat[u]) m.strat[u] = pick1(allowedStrats(ev, u)); }); }
+    [...m.red, ...m.blue].forEach(u => { if (!m.strat[u]) m.strat[u] = pick1(allowedStrats(ev, u)); });
+    if (hasReal(m.red) || hasReal(m.blue)) notify(`⚔️ **${ev.name}** · ${m.label}\n🔴 ${m.red.map(un).join(', ')}\n🔵 ${m.blue.map(un).join(', ')}`, ev.id); }
   if (!m.final && (ph === 'done' || ph === 'over')) finalize(ev, m);
   m.phase = ph; m.end = end; return ph === 'over';
 }
@@ -457,8 +475,11 @@ function tickEvent(ev) {
   const t = now();
   if (ev.status === 'scheduled') {
     if (t < ev.startAt) return;
-    if (ev.type === 'cmpfinals') { initBracket(ev, true); ev.status = 'playoffs'; return; }
-    startQuals(ev); return;
+    const real = ev.entries.some(e => { const x = db.users[e.uid]; return x && !x.test; });
+    if (ev.type === 'cmpfinals') { initBracket(ev, true); ev.status = 'playoffs'; if (real) notify(`🏆 **${ev.name}** — championship finals are set!`, ev.id); return; }
+    startQuals(ev);
+    if (ev.status === 'quals' && real) notify(`🟢 **${ev.name}** is live!\n${ev.division} · ${ev.type === 'dcmp' ? 'district championship' : 'district event'}`, ev.id);
+    return;
   }
   if (ev.status === 'quals') {
     const m = ev.quals[ev.cur];
@@ -520,7 +541,7 @@ async function delTest(u) {
   for (const [tok, s] of sessCache) if (s.uid === String(u.id)) sessCache.delete(tok);
   Object.values(db.users).forEach(x => { x.friends = (x.friends || []).filter(f => f !== u.id); });
   db.history = db.history.filter(h => h.uid !== u.id); db.history.forEach(h => { h.mates = h.mates.filter(x => x !== u.id); h.opps = h.opps.filter(x => x !== u.id); });
-  Object.values(db.points).forEach(p => { delete p[u.id]; }); delete db.users[u.id]; return true;
+  Object.values(db.points).forEach(p => { delete p[u.id]; }); delete db.users[u.id]; userHash.delete(u.id); return true;
 }
 
 // ---------- per-player event history ----------
@@ -654,6 +675,9 @@ async function api(req, res, url) {
     const e = { id: id(), name: String(B.name).slice(0, 80), type, division: B.division, seasonId: season().id, startAt: +B.startAt, status: 'scheduled', maxTeams: type === 'dcmp' ? 35 : 28, qualRounds: 12, thirdRound: type === 'dcmp', entries: [] }; db.events[e.id] = e; save(); return send(res, 200, { id: e.id }); }
   if (m === 'POST' && (r = p.match(/^\/api\/mod\/events\/(\d+)\/start$/))) { mod(); const ev = db.events[r[1]]; need(ev && ev.status === 'scheduled', 'Cannot start'); ev.startAt = now(); save(); return send(res, 200, {}); }
   if (m === 'POST' && p === '/api/mod/grant') { mod(); const u = userByName(B.username || ''); need(u, 'No such player'); u.mod = B.revoke ? false : true; save(); return send(res, 200, {}); }
+  if (m === 'POST' && p === '/api/mod/tokens') { mod(); const u = userByName(B.username || ''); need(u, 'No such player');
+    const amt = Math.trunc(+B.amount || 0); need(amt !== 0 && Math.abs(amt) <= 1000000, 'Amount must be non-zero, |amount| <= 1000000');
+    u.tokens = Math.max(0, (u.tokens || 0) + amt); save(); return send(res, 200, { username: u.username, tokens: u.tokens }); }
   if (m === 'GET' && p === '/api/mod/test-accounts') { mod(); return send(res, 200, Object.values(db.users).filter(u => u.test).map(u => ({ username: u.username, division: u.division, robots: u.inventory.map(i => (db.robots[i] || {}).number) }))); }
   if (m === 'POST' && p === '/api/mod/test-accounts') { mod(); const rbs = Object.values(db.robots); need(rbs.length, 'No robots exist');
     let ev = null, n = Math.min(Math.max(1, +B.count || 1), 100);

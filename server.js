@@ -690,6 +690,27 @@ async function api(req, res, url) {
   const curMatch = ev => ev.status === 'quals' ? ev.quals[ev.cur] : (ev.status === 'playoffs' && ev.po ? ev.po.cur : null);
   if (m === 'POST' && (r = p.match(/^\/api\/mod\/events\/(\d+)\/ffqueue$/))) { mod(); const ev = db.events[r[1]]; need(ev, 'No such event'); const mm = curMatch(ev); need(mm, 'No match in progress'); need(phaseOf(mm, now())[0] === 'queue', 'Match is not in strategy draft'); mm.t0 = now() - DUR().q; save(); return send(res, 200, {}); } // rewind to auto start; unset strategies randomize on next tick
   if (m === 'POST' && (r = p.match(/^\/api\/mod\/events\/(\d+)\/skipmatch$/))) { mod(); const ev = db.events[r[1]]; need(ev, 'No such event'); const mm = curMatch(ev); need(mm, 'No match in progress'); const ph = phaseOf(mm, now())[0]; need(ph !== 'done' && ph !== 'over', 'Match already finished'); const D = DUR(); mm.t0 = now() - (D.q + D.a + D.t + D.e) - 500; save(); return send(res, 200, {}); } // jump to 'done' → score finalizes, result shows ~12s, then advances
+  if (m === 'GET' && (r = p.match(/^\/api\/mod\/events\/(\d+)\/alliances$/))) { mod(); const ev = db.events[r[1]]; need(ev && ev.sel, 'No alliances');
+    const ROLE = ['Captain', 'First Pick', 'Second Pick', 'Backup Robot'], where = {};
+    const als = ev.sel.alliances.filter(a => !a.empty).map(a => { const lb = confLabel(ev, a) || ('Alliance ' + a.id.replace(/^[A-Z]/, ''));
+      a.picks.forEach((uid, i) => { where[uid] = lb + ' · ' + (ROLE[i] || 'Pick'); });
+      return { id: a.id, label: lb, picks: a.picks.map((uid, i) => ({ uid, username: un(uid), role: ROLE[i] || 'Pick' })) }; });
+    const entrants = ev.entries.filter(e => db.users[e.uid]).map(e => ({ uid: e.uid, username: un(e.uid), slot: where[e.uid] || 'Unpicked' })).sort((a, b) => a.username.localeCompare(b.username));
+    return send(res, 200, { name: ev.name, alliances: als, entrants, live: !!(ev.po && ev.po.cur) }); }
+  if (m === 'POST' && (r = p.match(/^\/api\/mod\/events\/(\d+)\/alliance$/))) { mod(); const ev = db.events[r[1]]; need(ev, 'No such event');
+    need(ev.status === 'playoffs' && ev.sel && ev.po && !ev.po.done, 'Event is not in playoffs');
+    const al = ev.sel.alliances.find(a => a.id === B.aid); need(al && !al.empty, 'No such alliance');
+    const idx = Math.trunc(+B.index); need(idx >= 0 && idx < al.picks.length, 'Bad slot');
+    const inn = String(Math.trunc(+B.uid)), out = al.picks[idx]; // uids are strings in game state
+    need(db.users[inn], 'No such player'); need(inn !== out, 'Same player');
+    need(ev.entries.some(e => e.uid === inn), 'Player is not in this event');
+    const fix = a => { a.lineup = a.picks.slice(0, 3); a.backup = a.picks[3] || null;
+      if (a.picks.length) { a.captain = a.picks[0]; const ec = ev.sel.everCaptains = ev.sel.everCaptains || []; if (!ec.includes(a.captain)) ec.push(a.captain); } };
+    const loc = ev.sel.alliances.map(a => ({ a, j: a.picks.indexOf(inn) })).find(x => x.j >= 0);
+    if (loc && loc.a === al) { al.picks[idx] = inn; al.picks[loc.j] = out; }
+    else if (loc) { al.picks[idx] = inn; loc.a.picks[loc.j] = out; fix(loc.a); }
+    else al.picks[idx] = inn;
+    fix(al); save(); return send(res, 200, {}); }
   if (m === 'POST' && p === '/api/mod/grant') { mod(); const u = userByName(B.username || ''); need(u, 'No such player'); u.mod = B.revoke ? false : true; save(); return send(res, 200, {}); }
   if (m === 'POST' && p === '/api/mod/tokens') { mod(); const u = userByName(B.username || ''); need(u, 'No such player');
     const amt = Math.trunc(+B.amount || 0); need(amt !== 0 && Math.abs(amt) <= 1000000, 'Amount must be non-zero, |amount| <= 1000000');

@@ -684,7 +684,7 @@ async function api(req, res, url) {
     const e = { id: id(), name: String(B.name).slice(0, 80), type, division: B.division, seasonId: season().id, startAt: +B.startAt, status: 'scheduled', maxTeams: type === 'dcmp' ? 35 : 28, qualRounds: 12, thirdRound: type === 'dcmp', entries: [] }; db.events[e.id] = e; save(); return send(res, 200, { id: e.id }); }
   if (m === 'POST' && (r = p.match(/^\/api\/mod\/events\/(\d+)\/start$/))) { mod(); const ev = db.events[r[1]]; need(ev && ev.status === 'scheduled', 'Cannot start'); ev.startAt = now(); save(); return send(res, 200, {}); }
   if (m === 'POST' && (r = p.match(/^\/api\/mod\/events\/(\d+)\/close$/))) { mod(); const ev = db.events[r[1]]; need(ev, 'No such event'); need(!['complete', 'cancelled'].includes(ev.status), 'Event already finished'); ev.status = 'cancelled'; save(); return send(res, 200, {}); }
-  if (m === 'DELETE' && (r = p.match(/^\/api\/mod\/events\/(\d+)$/))) { mod(); const ev = db.events[r[1]]; need(ev, 'No such event'); need(ev.status === 'scheduled', 'Only scheduled events can be deleted — close live events instead'); delete db.events[ev.id]; save(); return send(res, 200, {}); }
+  if (m === 'DELETE' && (r = p.match(/^\/api\/mod\/events\/(\d+)$/))) { mod(); const ev = db.events[r[1]]; need(ev, 'No such event'); need(['scheduled', 'cancelled'].includes(ev.status), 'Only scheduled or cancelled events can be deleted — close live events first'); delete db.events[ev.id]; db.history = db.history.filter(h => h.eid !== ev.id); save(); return send(res, 200, {}); }
   if (m === 'POST' && (r = p.match(/^\/api\/mod\/events\/(\d+)\/division$/))) { mod(); const ev = db.events[r[1]]; need(ev, 'No such event'); need(ev.status === 'scheduled', 'District can only be changed before the event starts'); need(DIVS.includes(B.division), 'Unknown division'); ev.division = B.division; save(); return send(res, 200, {}); }
   if (m === 'POST' && p === '/api/mod/division') { mod(); const u = userByName(B.username || ''); need(u, 'No such player'); need(DIVS.includes(B.division), 'Unknown division'); u.division = B.division; save(); return send(res, 200, { username: u.username, division: u.division }); }
   if (m === 'POST' && p === '/api/mod/grant') { mod(); const u = userByName(B.username || ''); need(u, 'No such player'); u.mod = B.revoke ? false : true; save(); return send(res, 200, {}); }
@@ -702,7 +702,8 @@ async function api(req, res, url) {
       const out = pool.slice(0, n).map(u => { ev.entries.push({ uid: u.id, robotId: u.inventory[0] }); return { username: u.username, password: 'test1234', division: ev.division }; });
       save(); return send(res, 200, { created: out }); }
     else need(!B.division || B.division === 'random' || DIVS.includes(B.division), 'Unknown division');
-    const out = []; for (let i = 0; i < n; i++) { const div = ev ? ev.division : DIVS.includes(B.division) ? B.division : pick1(DIVS), u = await mkTest(div, pick1(rbs));
+    const fixedRb = B.robotId ? db.robots[B.robotId] : null; need(!B.robotId || fixedRb, 'No such robot');
+    const out = []; for (let i = 0; i < n; i++) { const div = ev ? ev.division : DIVS.includes(B.division) ? B.division : pick1(DIVS), u = await mkTest(div, fixedRb || pick1(rbs));
       if (ev) ev.entries.push({ uid: u.id, robotId: u.inventory[0] }); out.push({ username: u.username, password: 'test1234', division: div }); }
     save(); return send(res, 200, { created: out }); }
   if (m === 'DELETE' && p === '/api/mod/test-accounts') { mod(); const list = B.all ? Object.values(db.users).filter(u => u.test) : [userByName(B.username || '')].filter(u => u && u.test); need(list.length, 'No matching test account');

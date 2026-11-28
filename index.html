@@ -363,7 +363,9 @@ async function profilePage(name) {
     <h2>Event history</h2><div class="card">${eventHistoryHtml(p)}</div>
     <h2>Robots</h2><div class="grid g3">${p.robots.map(r => robotCard(r, { price: false })).join('') || '<div class="mute">None</div>'}</div>
     <h2 class="mt">Friends</h2><div class="card">${p.friends.length ? p.friends.map(f => `<a class="chip" href="#/player/${esc(f)}">${esc(f)}</a>`).join('') : '<span class="mute">No friends added yet.</span>'}</div>
-    ${mine ? `<div class="card"><h3>Account</h3><label>Email (optional)</label><div class="row"><input id="em" type="email" value="${esc(S.me.email)}" style="max-width:320px"><button data-act="email">Save email</button><span class="sp"></span><button class="ghost" data-act="logout">Sign out</button></div></div>` : ''}`);
+    ${mine ? `<div class="card"><h3>Account</h3><label>Email (optional)</label><div class="row"><input id="em" type="email" value="${esc(S.me.email)}" style="max-width:320px"><button data-act="email">Save email</button><span class="sp"></span><button class="ghost" data-act="logout">Sign out</button></div>
+      <label class="mt">Discord user ID (optional — get match pings)</label><div class="row"><input id="dc" placeholder="e.g. 1234567890123456789" value="${esc(S.me.discord || '')}" style="max-width:320px"><button data-act="discord">Save</button>${S.me.discord ? '<span class="chip ok">linked</span>' : ''}</div>
+      <div class="small mute mt">Discord → Settings → Advanced → turn on <b>Developer Mode</b>, then right-click your name → <b>Copy User ID</b>. You'll be @mentioned in Discord when your strategy draft opens.</div></div>` : ''}`);
 }
 function eventHistoryHtml(p) {
   if (!p.eventHistory.length) return '<span class="mute">No events yet.</span>';
@@ -379,6 +381,7 @@ function eventHistoryHtml(p) {
 }
 H.friend = async el => { await api('/api/friends', 'POST', { username: el.dataset.u }); toast('Friend added'); await refreshMe(); };
 H.email = async () => { S.me = await api('/api/me/email', 'POST', { email: $('#em').value }); toast('Email saved'); };
+H.discord = async () => { await api('/api/me/discord', 'POST', { discord: $('#dc').value }); S.me.discord = $('#dc').value.trim(); toast(S.me.discord ? 'Discord ID saved — you\'ll get match pings' : 'Discord ID removed'); };
 async function playersPage() {
   app(`<h1>Players</h1><input id="q" placeholder="Search by username…" style="max-width:380px"><div id="res" class="grid g3 mt"></div>`);
   const go = async () => { const list = await api('/api/users?q=' + encodeURIComponent($('#q').value)); $('#res').innerHTML = list.map(u => `<a class="card" style="margin:0;color:inherit" href="#/player/${esc(u.username)}"><b>${esc(u.username)}</b>${fr(u.username)}${u.active ? ' <i class="dot on"></i>' : ''}<div class="mute small">${esc(u.division)}</div></a>`).join('') || '<span class="mute">No players found.</span>'; };

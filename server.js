@@ -300,7 +300,7 @@ function notify(text, eid) {
   if (!HOOK) return;
   const content = (DH_MENTION ? DH_MENTION + ' ' : '') + text + (SITE && eid ? '\n' + SITE + '/#/event/' + eid : '');
   fetch(HOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'FPP Fantasy', content: content.slice(0, 1990), allowed_mentions: { parse: DH_MENTION ? ['everyone'] : [] } }) }).catch(() => {});
+    body: JSON.stringify({ username: 'FPP Fantasy', content: content.slice(0, 1990), allowed_mentions: { parse: ['users'].concat(DH_MENTION ? ['everyone'] : []) } }) }).catch(() => {});
 }
 function startQuals(ev) {
   if (ev.entries.length < 6) { ev.status = 'cancelled'; return; }
@@ -314,6 +314,10 @@ function tickMatch(ev, m) { // returns true when match fully over
     [...m.red, ...m.blue].forEach(u => { if (!m.strat[u]) m.strat[u] = pick1(allowedStrats(ev, u)); });
     if (ph === 'auto' && (hasReal(m.red) || hasReal(m.blue))) notify(`⚔️ **${ev.name}** · ${m.label}\n🔴 ${m.red.map(un).join(', ')}\n🔵 ${m.blue.map(un).join(', ')}`, ev.id); }
   if (!m.final && (ph === 'done' || ph === 'over')) finalize(ev, m);
+  if (ph === 'queue' && !m.stratPing) { m.stratPing = true; // once per match: ping linked players to pick strategies
+    const ment = side => side.map(u => { const x = db.users[u]; return x && x.discord ? `<@${x.discord}> ${x.username}` : null; }).filter(Boolean);
+    const r = ment(m.red), b = ment(m.blue);
+    if (r.length || b.length) notify(`🎯 **${ev.name}** · ${m.label} — strategy draft is open!\n${r.length ? '🔴 ' + r.join('  ') + '\n' : ''}${b.length ? '🔵 ' + b.join('  ') : ''}`, ev.id); }
   m.phase = ph; m.end = end; return ph === 'over';
 }
 function refreshLineup(ev, m) {
@@ -588,7 +592,7 @@ class HttpErr extends Error { constructor(c, m) { super(m); this.code = c; } }
 const need = (c, m) => { if (!c) throw new HttpErr(400, m); };
 function body(req) { return new Promise((ok, no) => { let b = '', n = 0; req.on('data', d => { n += d.length; if (n > 4e6) { no(new HttpErr(413, 'Too large')); req.destroy(); } else b += d; }); req.on('end', () => { try { ok(b ? JSON.parse(b) : {}); } catch (e) { no(new HttpErr(400, 'Bad JSON')); } }); }); }
 const cookie = (req, k) => (req.headers.cookie || '').split(/;\s*/).map(c => c.split('=')).find(c => c[0] === k)?.[1];
-function me(u) { return { champ: Object.values(db.events).some(e => e.seasonId === season().id && (e.type === 'conference' || e.type === 'cmpfinals')), id: u.id, username: u.username, email: u.email || '', division: u.division, tokens: u.tokens, isMod: !!u.mod, inventory: u.inventory.map(i => robotBrief(db.robots[i])), friends: u.friends.map(un), season: season() }; }
+function me(u) { return { champ: Object.values(db.events).some(e => e.seasonId === season().id && (e.type === 'conference' || e.type === 'cmpfinals')), id: u.id, username: u.username, email: u.email || '', discord: u.discord || '', division: u.division, tokens: u.tokens, isMod: !!u.mod, inventory: u.inventory.map(i => robotBrief(db.robots[i])), friends: u.friends.map(un), season: season() }; }
 
 async function api(req, res, url) {
   const m = req.method, p = url.pathname, q = url.searchParams;
@@ -622,6 +626,10 @@ async function api(req, res, url) {
   if (m === 'POST' && p === '/api/logout') { await logout_user(sid); return send(res, 200, {}, { 'Set-Cookie': 'sid=; Path=/; Max-Age=0' }); }
   if (m === 'GET' && p === '/api/me') return send(res, 200, user ? me(user) : null);
   if (m === 'POST' && p === '/api/me/email') { auth(); const em = String(B.email || '').slice(0, 120); try { await qrun('UPDATE users SET email = ? WHERE id = ?', [em, +user.id]); } catch (e) { throw new HttpErr(400, 'Email already in use'); } user.email = em; save(); return send(res, 200, me(user)); }
+  if (m === 'POST' && p === '/api/me/discord') { auth(); const raw = String(B.discord || '').trim();
+    if (!raw) { delete user.discord; save(); return send(res, 200, {}); }
+    need(/^\d{5,25}$/.test(raw), 'Paste your numeric Discord user ID (Discord Settings → Advanced → Developer Mode, then right-click your name → Copy User ID)');
+    user.discord = raw; save(); return send(res, 200, {}); }
   if (m === 'POST' && p === '/api/shop/buy') { auth(); const rb = db.robots[B.robotId]; need(rb, 'No such robot'); need(!user.inventory.includes(rb.id), 'Already owned'); need(user.tokens >= price(rb.rank), 'Not enough tokens'); user.tokens -= price(rb.rank); user.inventory.push(rb.id); save(); return send(res, 200, me(user)); }
   if (m === 'GET' && p === '/api/events') { auth(); const div = q.get('division') || user.division;
     return send(res, 200, Object.values(db.events).filter(e => e.seasonId === season().id).filter(e => e.division === div || e.type === 'cmpfinals' || e.cmpGroup && e.entries.some(x => x.uid === user.id)).sort((a, b) => b.startAt - a.startAt).map(e => ({ id: e.id, name: e.name, type: e.type, division: e.division, status: e.status, startAt: e.startAt, teams: e.entries.length, maxTeams: e.maxTeams, joined: e.entries.some(x => x.uid === user.id) }))); }

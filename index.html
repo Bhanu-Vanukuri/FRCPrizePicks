@@ -189,7 +189,7 @@ async function api(path, method = 'GET', body) {
 }
 const H = {}; // click handlers by data-act
 document.addEventListener('click', async e => {
-  const el = e.target.closest('[data-act]'); if (!el || !H[el.dataset.act]) return;
+  const el = e.target.closest('[data-act]'); if (!el || !H[el.dataset.act] || el.tagName === 'SELECT') return; // selects fire on 'change', not click
   e.preventDefault();
   try { await H[el.dataset.act](el, e); } catch (err) { toast(err.message, true); }
 });

@@ -560,9 +560,9 @@ function eventHistory(u) {
         const rb = db.robots[(ev.entries.find(e => e.uid === u.id) || {}).robotId], dr = ranksFor(u.division).find(x => x.uid === u.id);
         h.finals = { epa: rb ? rb.epa : 0, robot: rb ? rb.number : null, district: u.division, districtRank: dr ? dr.rank : null, districtPoints: dr ? dr.points : 0,
           banners: u.awards.filter(a => a.type === 'banner' && a.eventId !== ev.id && a.season === season().name).map(a => a.eventName) };
-      } else if (st) { // captains, and everyone who didn't reach the bracket, get their qualification rank and record
-        const caps = ev.sel ? (ev.sel.everCaptains || ev.sel.alliances.map(a => a.captain)) : [];
-        if (caps.includes(u.id) || !al) h.qual = { rank: rankings(ev).findIndex(r => r.uid === u.id) + 1, w: st.w || 0, t: st.t || 0, l: st.l || 0 };
+      } else if (st) { // everyone who played quals gets their qualification rank and record
+        const qi = rankings(ev).findIndex(r => r.uid === u.id);
+        if (qi >= 0) h.qual = { rank: qi + 1, w: st.w || 0, t: st.t || 0, l: st.l || 0 };
       }
       if (al) { const po = ev.po, idx = al.picks.indexOf(u.id);
         h.playoff = { role: (ev.type === 'cmpfinals' ? ['Captain', '1st Pick', '2nd Pick', 'Backup'] : ['Captain', 'First Pick', 'Second Pick', 'Backup Robot'])[idx] || 'Pick', alliance: al.id.replace(/^[A-Z]/, ''), conf: confLabel(ev, al), outcome: 'active' };
